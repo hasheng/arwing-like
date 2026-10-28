@@ -5,16 +5,21 @@ Inspired by classic arcade rail shooters; all art is primitive boxes and all aud
 synthesised in code. No third-party or Nintendo assets are used.
 
 ## Features
-- Three levels (config table in `main.gd`), each ending in a boss
-- Lasers, hold-to-lock homing missiles, barrel roll that dodges everything
-- Drone, tank and diver enemies; pickups, explosions, screen shake
-- Title screen, pause, saved high score
+- Three levels with different rules: a rail canyon (scripted phases, obstacle walls), an asteroid
+  belt (rocks split when shot, flight rings build a combo) and an all-range dogfight arena
+  (free turning, chasing enemies, U-turn, circling boss)
+- Mouse-aimed reticle, hold-to-lock homing missiles, barrel roll that reflects enemy shots
+- Boost / brake gauge, loop, smart bombs
+- Power-ups: shield, weapon levels, bomb, overdrive, repair
+- Drone, diver, tank and ace enemies (aces dodge lasers mid-roll); formations pay a bonus
+- Procedural audio, title screen, pause, saved high score
 
 ## Controls
-WASD move · Space fire · hold Shift/C to lock on, release to launch · Q/E barrel roll · P/Esc pause · R restart / next level
+WASD move (A/D turn in the dogfight) - mouse aim - LMB/Space fire - hold RMB/C lock on, release to launch -
+B/MMB bomb - Shift boost - Ctrl brake - Q/E barrel roll - F loop / U-turn - P/Esc pause - R restart / next level
 
 ## Run
 Open the folder in Godot 4.7+, or `godot --path .`
 
 ## Tests
-Headless smoke tests: `godot --headless --path . --script res://tests/boss_smoke.gd` (also `enemy_smoke`, `flow_smoke`).
+Headless smoke tests: `godot --headless --path . --script res://tests/boss_smoke.gd` (also `enemy_smoke`, `mechanics_smoke`, `modes_smoke`, `flow_smoke`).
