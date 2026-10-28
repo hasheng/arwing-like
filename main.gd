@@ -11,6 +11,8 @@ const Foes = preload("res://foes.gd")
 const Obstacles = preload("res://obstacles.gd")
 const Pickups = preload("res://pickups.gd")
 const Hud = preload("res://hud.gd")
+const Bosses = preload("res://bosses.gd")
+const Music = preload("res://music.gd")
 
 const FORWARD_SPEED := 30.0
 const BOOST_MULT := 2.2
@@ -65,7 +67,7 @@ const LEVELS := [
 		"name": "SPACE STATION", "mode": "allrange",
 		"sky": Color(0.02, 0.02, 0.06), "horizon": Color(0.12, 0.14, 0.3), "ground": Color(0.15, 0.16, 0.22),
 		"pillar": Color(0.3, 0.32, 0.4), "boss_color": Color(0.7, 0.15, 0.15),
-		"boss_hp": 150.0, "quota": 14, "max_foes": 6, "arena": 210.0,
+		"boss_hp": 120.0, "quota": 14, "max_foes": 6, "arena": 210.0,
 		"foe_speed": 24.0, "shot_speed": 80.0, "shot_dmg": 12.0,
 		"mix": {"drone": 0.45, "diver": 0.2, "ace": 0.35},
 	},
@@ -128,6 +130,9 @@ var phase_idx := -1
 var uturn_t := 0.0
 var sfx: Dictionary = {}
 var sfx_players: Array = []
+var music: Node
+var music_state := ""           # last state the music was told about
+var shot_mode := false          # --boss: scripted screenshots (ignores pause, close-up camera)
 var aim_point := Vector3.ZERO   # world point under the mouse, on a plane ahead of the ship
 var mouse_seen := false         # until the mouse moves, aim straight ahead
 
@@ -227,11 +232,21 @@ func _ready() -> void:
 	}
 	for i in 10:
 		var ap := AudioStreamPlayer.new()
+		ap.volume_db = -9.0  # ten overlapping voices at full level clip the mix
 		add_child(ap)
 		sfx_players.append(ap)
 
 	hud = Hud.new()
 	add_child(hud)
+	music = Music.new()
+	add_child(music)
+	music.play_song(mode)
+	if "--boss" in OS.get_cmdline_user_args():  # jump to the boss fight (scripted screenshots)
+		shot_mode = true
+		if mode == "allrange":
+			kills = int(cfg["quota"])
+		else:
+			rig.position.z = -float(cfg["boss_z"])
 	_update_camera(1.0)
 
 
@@ -314,11 +329,46 @@ func _physics_process(delta: float) -> void:
 		elif state == "paused":
 			state = "play"
 
+	if shot_mode and state == "paused":
+		state = "play"
 	if state == "play":
 		_play(delta)
 	elif state == "dead" or state == "won":
 		_move_wrecks(delta)  # let the last explosions finish
+	_update_music()
 	_update_hud()
+
+
+## The score follows the action: stems fade in as the level builds, the boss gets its own track,
+## boost and brake bend the pitch, and the end of a run gets a short sting.
+func _update_music() -> void:
+	if state != music_state:
+		music_state = state
+		match state:
+			"dead":
+				music.play_song("defeat", false)
+			"won":
+				music.play_song("victory", false)
+			"play", "title":
+				pass
+	if state == "dead" or state == "won":
+		music.set_intensity(1.0)
+		return
+	var song := mode
+	var level := 0.3
+	if boss_spawned:
+		song = "boss_" + mode
+		level = 1.0
+	elif mode == "allrange":
+		level = 0.25 + 0.75 * clampf(float(kills) / float(cfg["quota"]), 0.0, 1.0)
+	else:
+		level = [0.25, 0.5, 1.0][clampi(phase_idx, 0, 2)]
+	if state == "title":
+		level = 0.0
+	music.play_song(song)
+	music.set_intensity(level)
+	music.duck = 10.0 if state == "paused" else 0.0
+	music.speed = 1.0 + (speed_mult - 1.0) * 0.07 if state == "play" else 1.0
 
 
 func _load_high() -> int:
@@ -505,6 +555,10 @@ func _update_camera(delta: float) -> void:
 	cam.v_offset = randf_range(-shake, shake)
 	cam.look_at(rig.to_global(Vector3(ship.position.x * 0.35, ship.position.y * 0.35, -30)))
 	cam.rotation.z = -ship.bank * 0.35
+	if shot_mode and not boss.is_empty():  # --boss: close-up on the boss for scripted screenshots
+		var bn: Node3D = boss["n"]
+		cam.global_position = bn.global_position - (boss["dir"] as Vector3) * 30.0 + Vector3(11, 7, 0)
+		cam.look_at(bn.global_position)
 
 
 func _sfx(name: String) -> void:
@@ -617,7 +671,7 @@ func _bomb() -> void:
 		if (rk["n"].global_position as Vector3).distance_to(sp) < BOMB_RADIUS:
 			_break_rock(rk, true, false)
 	if not boss.is_empty() and (boss["n"].global_position as Vector3).distance_to(sp) < BOMB_RADIUS * 1.4:
-		_damage_target(boss, 15.0)
+		Bosses.bomb(self, 15.0)
 
 
 # ------------------------------------------------------------------------------ lock-on
@@ -648,8 +702,7 @@ func _lock_next() -> void:
 	var best: Dictionary = {}
 	var best_d := INF
 	var cands: Array = foes.duplicate()
-	if not boss.is_empty():
-		cands.append(boss)
+	cands.append_array(Bosses.targets(self))
 	for t in cands:
 		if t in locks:
 			continue
@@ -699,8 +752,8 @@ func _move_missiles(delta: float) -> void:
 			n.look_at(n.global_position + dir)
 		n.position += dir * MISSILE_SPEED * delta
 		var done := false
-		if alive and n.position.distance_to(t["n"].global_position) < (6.0 if _is_boss(t) else 2.6):
-			_damage_target(t, 8.0)
+		if alive and n.position.distance_to(t["n"].global_position) < float(t.get("r", 2.6)):
+			_damage_target(t, 8.0, n.global_position)
 			done = true
 		elif _gone(n.global_position, 1.0e9):
 			done = true
@@ -711,12 +764,18 @@ func _move_missiles(delta: float) -> void:
 
 # ----------------------------------------------------------------------------- damage
 
-func _damage_target(t: Dictionary, dmg: float) -> void:
+## `from` is where the hit came from, for bosses that can only be hurt from some directions.
+func _damage_target(t: Dictionary, dmg: float, from := Vector3.INF) -> void:
+	if t.get("part", false):
+		Bosses.damage_part(self, t, dmg)
+		return
 	if _is_boss(t):
-		boss["hp"] -= dmg
-		score += 10
-		boss["flash"] = 0.08
-		Util.flash(boss["n"], true)
+		var dealt := Bosses.filter(self, dmg, from)
+		boss["hp"] -= dealt
+		if dealt >= dmg:
+			score += 10
+			boss["flash"] = 0.08
+			Util.flash(boss["n"], true)
 		if boss["hp"] <= 0.0:
 			score += 2000
 			Util.burst(self, boss["n"].global_position, Color(1.0, 0.7, 0.2), 120, 3.0)
@@ -740,82 +799,14 @@ func _damage_target(t: Dictionary, dmg: float) -> void:
 
 func _spawn_boss() -> void:
 	boss_spawned = true
-	var n := Node3D.new()
-	n.add_child(Util.box(Vector3(8, 3, 8), cfg["boss_color"]))
-	n.add_child(Util.box(Vector3(2.0, 1.2, 5.0), cfg["boss_color"].darkened(0.3), Vector3(0, 1.8, -1)))
-	for side in [-1.0, 1.0]:
-		var p := Node3D.new()
-		p.name = "WingL" if side < 0.0 else "WingR"
-		p.position = Vector3(side * 4.0, 0, 1.0)
-		p.add_child(Util.box(Vector3(9.0, 0.5, 3.0), cfg["boss_color"].darkened(0.4), Vector3(side * 4.5, 0, 0)))
-		p.add_child(Util.box(Vector3(0.6, 2.0, 2.0), Color(0.9, 0.3, 0.3), Vector3(side * 8.8, 0.8, 0)))
-		n.add_child(p)
-	var core := Util.glow(Util.box(Vector3(2.5, 2.5, 2.5), Color(1.0, 0.55, 0.1), Vector3(0, 0, 4.2)), Color(1.0, 0.5, 0.1), 1.5)
-	core.name = "Core"
-	n.add_child(core)
-	add_child(n)
-	if mode == "allrange":
-		n.global_position = ship.global_position + _rig_forward() * 120.0
-	else:
-		n.global_position = Vector3(0, 0, rig.position.z - 200.0)
-	boss = {"n": n, "hp": cfg["boss_hp"], "t": 0.0, "fire": 2.0, "entry": 0.0, "flash": 0.0,
-			"a": randf() * TAU, "summon": 8.0}
-	hud.toast("BOSS APPROACHING")
+	boss = Bosses.spawn(self)
+	hud.toast("%s APPROACHING" % boss["title"])
 
 
 func _move_boss(delta: float) -> void:
 	if boss.is_empty():
 		return
-	var n: Node3D = boss["n"]
-	var prev_x := n.position.x
-	boss["t"] += delta
-	boss["entry"] = minf(boss["entry"] + delta / 3.0, 1.0)
-	var enraged: bool = boss["hp"] < cfg["boss_hp"] * 0.5
-	var entry_ease: float = 1.0 - pow(1.0 - float(boss["entry"]), 3.0)
-	var sp := ship.global_position
-	if mode == "allrange":
-		# Circles the arena, always facing the player; calls in fighters while it fights.
-		boss["a"] += delta * (0.5 if enraged else 0.32)
-		var arena: float = cfg["arena"]
-		var orbit := Vector3(cos(boss["a"]) * arena * 0.55, 4.0 + sin(boss["t"] * 0.8) * 6.0, sin(boss["a"]) * arena * 0.55)
-		var edge := Vector3(orbit.x, orbit.y, orbit.z).normalized() * arena * 0.95
-		n.position = edge.lerp(orbit, entry_ease)
-		n.look_at(sp)
-		n.rotate_object_local(Vector3.UP, PI)  # its core faces the player
-		boss["summon"] -= delta
-		if boss["summon"] <= 0.0 and foes.size() < 4 and boss["entry"] >= 1.0:
-			boss["summon"] = 7.0 if enraged else 10.0
-			for i in 2:
-				_spawn_chaser()
-	else:
-		var sway := 1.6 if enraged else 0.8
-		n.position = Vector3(sin(boss["t"] * sway) * 18.0, sin(boss["t"] * sway * 1.3) * 6.0,
-				rig.position.z - lerpf(200.0, 70.0, boss["entry"]))
-		var vx := (n.position.x - prev_x) / maxf(delta, 0.0001)
-		n.rotation.z = (1.0 - entry_ease) * TAU * 2.0 - vx * 0.012
-		n.rotation.x = sin(boss["t"] * 1.3) * 0.08
-	# Wings flap, core pulses and swells just before each volley so the attack is telegraphed.
-	var flap := sin(boss["t"] * (6.0 if enraged else 3.0)) * 0.22
-	n.get_node("WingL").rotation.z = flap
-	n.get_node("WingR").rotation.z = -flap
-	var core: MeshInstance3D = n.get_node("Core")
-	var windup: bool = boss["entry"] >= 1.0 and boss["fire"] < 0.45
-	core.scale = Vector3.ONE * (1.5 if windup else 1.0 + 0.12 * sin(boss["t"] * 6.0))
-	var cm: StandardMaterial3D = core.material_override
-	if float(boss["flash"]) > 0.0:
-		boss["flash"] = float(boss["flash"]) - delta
-		if float(boss["flash"]) <= 0.0:
-			Util.flash(n, false)
-	if float(boss["flash"]) <= 0.0:
-		cm.emission_energy_multiplier = 5.0 if windup else 1.5
-	boss["fire"] -= delta
-	if boss["fire"] <= 0.0 and boss["entry"] >= 1.0:
-		boss["fire"] = 0.8 if enraged else 1.4
-		var spread := 2 if enraged else 1
-		for i in range(-spread, spread + 1):
-			_enemy_shot(n.global_position, sp + _rig_right() * i * 4.0)
-	if n.global_position.distance_to(sp) < 7.0:
-		_hurt(30.0)
+	Bosses.update(self, delta)
 
 
 func _rig_right() -> Vector3:
@@ -868,9 +859,11 @@ func _move_lasers(delta: float) -> void:
 					_hit_rock(rk, 1)
 					hit = true
 					break
-		if not hit and not boss.is_empty() and n.position.distance_to(boss["n"].position) < 6.0:
-			_damage_target(boss, 1.0)
-			hit = true
+		if not hit:
+			var bt := Bosses.hit_test(self, n.global_position)
+			if not bt.is_empty():
+				_damage_target(bt, 1.0, n.global_position)
+				hit = true
 		if hit or _gone(n.global_position, 20.0):
 			lasers.erase(l)
 			n.queue_free()
@@ -1204,9 +1197,11 @@ func _move_shots(delta: float) -> void:
 					_damage_target(f, 2.0)
 					gone = true
 					break
-			if not gone and not boss.is_empty() and n.position.distance_to(boss["n"].position) < 6.0:
-				_damage_target(boss, 2.0)
-				gone = true
+			if not gone:
+				var bt := Bosses.hit_test(self, n.global_position)
+				if not bt.is_empty():
+					_damage_target(bt, 2.0, n.global_position)
+					gone = true
 			if _gone(n.global_position, 1.0e9):
 				gone = true
 		else:
@@ -1418,6 +1413,6 @@ func _update_hud() -> void:
 	hud.update({
 		"level": cfg["name"], "score": score, "high": maxi(high_score, score), "progress": progress,
 		"hp": maxf(hp, 0.0) / 100.0, "shield": shield / SHIELD_MAX, "gauge": gauge, "locked": gauge_locked,
-		"boss": (maxf(boss["hp"], 0.0) / cfg["boss_hp"]) if not boss.is_empty() else -1.0,
+		"boss": Bosses.ratio(self),
 		"extra": extra, "message": msg, "state": state,
 	})

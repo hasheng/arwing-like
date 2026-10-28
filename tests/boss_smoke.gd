@@ -25,8 +25,10 @@ func _initialize() -> void:
 		for i in 150:
 			await physics_frame
 		assert(m.boss["hp"] < m.cfg["boss_hp"], "missile did not damage boss, level %d" % lvl)
+		for p in m.boss["parts"].duplicate():  # armour first: shielded bodies shrug off the finishing blow
+			m._damage_target(p, 999.0)
 		m.boss["hp"] = 1.0
-		m._damage_target(m.boss, 5.0)
+		m._damage_target(m.boss, 5.0, m.boss["n"].global_position - m.boss["dir"] * 5.0)  # a rear hit, for the rival
 		for i in 3:
 			await physics_frame
 		assert(m.state == "won", "state is " + m.state)

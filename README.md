@@ -7,7 +7,12 @@ synthesised in code. No third-party or Nintendo assets are used.
 ## Features
 - Three levels with different rules: a rail canyon (scripted phases, obstacle walls), an asteroid
   belt (rocks split when shot, flight rings build a combo) and an all-range dogfight arena
-  (free turning, chasing enemies, U-turn, circling boss)
+  (free turning, chasing enemies, U-turn)
+- A different boss per level, each with its own rule: the Warden's cannons shield its core and it
+  lunges once exposed; the Geode wears spinning crystal armour and hurls boulders you can shoot
+  apart; the Rival can only be hurt from behind, so you have to out-turn or out-brake it
+- Procedural chiptune music: a small sequencer renders looping stems (bass, drums, arp, lead) in
+  code, builds with the level, switches to a boss track, and bends pitch with boost and brake
 - Mouse-aimed reticle, hold-to-lock homing missiles, barrel roll that reflects enemy shots
 - Boost / brake gauge, loop, smart bombs
 - Power-ups: shield, weapon levels, bomb, overdrive, repair
@@ -20,6 +25,7 @@ B/MMB bomb - Shift boost - Ctrl brake - Q/E barrel roll - F loop / U-turn - P/Es
 
 ## Run
 Open the folder in Godot 4.7+, or `godot --path .`
+Add `-- --autostart --level=N` (0-2) to skip the title screen, and `--boss` to jump to the boss fight.
 
 ## Tests
-Headless smoke tests: `godot --headless --path . --script res://tests/boss_smoke.gd` (also `enemy_smoke`, `mechanics_smoke`, `modes_smoke`, `flow_smoke`).
+Headless smoke tests: `godot --headless --path . --script res://tests/boss_smoke.gd` (also `boss_mechanics`, `enemy_smoke`, `mechanics_smoke`, `modes_smoke`, `flow_smoke`, `music_smoke`).
