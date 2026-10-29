@@ -71,6 +71,24 @@ const LEVELS := [
 		"foe_speed": 24.0, "shot_speed": 80.0, "shot_dmg": 12.0,
 		"mix": {"drone": 0.45, "diver": 0.2, "ace": 0.35},
 	},
+	{
+		# Surface run, then a narrow trench with catwalks and gun emplacements, fighters on your tail,
+		# and one small vent at the end. Rail rules; "trench" adds walls, scraping and the tail chasers.
+		"name": "TRENCH RUN", "mode": "rail", "trench": true, "song": "trench", "boss": "port",
+		"sky": Color(0.02, 0.03, 0.08), "horizon": Color(0.22, 0.25, 0.36), "ground": Color(0.2, 0.21, 0.26),
+		"pillar": Color(0.34, 0.36, 0.42), "boss_color": Color(0.36, 0.38, 0.46),
+		"boss_z": 2300.0, "boss_hp": 1.0e9, "spawn": Vector2(2.5, 4.0),
+		"foe_speed": 10.0, "shot_speed": 60.0, "shot_dmg": 8.0, "mix": {"drone": 0.8, "diver": 0.2},
+		"waves": ["single", "vee", "line", "tanks"],
+		"obstacles": {"gap": 90.0, "kinds": ["column"]},
+		"trench_from": 700.0, "trench_half": 17.0,
+		"phases": [
+			{"from": 0.0, "name": "SURFACE APPROACH"},
+			{"from": 650.0, "name": "ENTER THE TRENCH", "spawn": 0.9, "obs": 0.8, "kinds": ["bridge", "wall"], "tail": 14.0},
+			{"from": 1500.0, "name": "STAY ON TARGET", "spawn": 0.7, "obs": 0.6, "kinds": ["bridge", "wall", "bridge"], "tail": 9.0},
+			{"from": 2050.0, "name": "FINAL APPROACH", "spawn": 1.6, "obs": 3.0, "kinds": ["bridge"]},
+		],
+	},
 ]
 
 ## Survive across scene reloads: which level we are on and the score at its start.
@@ -133,6 +151,10 @@ var sfx_players: Array = []
 var music: Node
 var music_state := ""           # last state the music was told about
 var shot_mode := false          # --boss: scripted screenshots (ignores pause, close-up camera)
+var tail_t := 8.0               # trench: seconds until the next fighter drops in behind you
+var mirror_cam: Camera3D        # trench: rear view, because the chasers are behind the camera
+var mirror_box: Control
+var station: Node3D             # trench: the big sphere you are flying toward
 var aim_point := Vector3.ZERO   # world point under the mouse, on a plane ahead of the ship
 var mouse_seen := false         # until the mouse moves, aim straight ahead
 
@@ -240,7 +262,19 @@ func _ready() -> void:
 	add_child(hud)
 	music = Music.new()
 	add_child(music)
-	music.play_song(mode)
+	music.play_song(cfg.get("song", mode))
+	if cfg.get("trench", false):
+		_build_station()
+		_build_mirror()
+	for a in OS.get_cmdline_user_args():  # --at=N starts N units down the level (scripted screenshots)
+		if a.begins_with("--at="):
+			rig.position.z = -float(a.get_slice("=", 1))
+			scenery_z = rig.position.z
+			next_obs_z = rig.position.z - 100.0
+			next_rock_z = rig.position.z - 100.0
+			next_ring_z = rig.position.z - 160.0
+		if a == "--tail":
+			_spawn_tail()
 	if "--boss" in OS.get_cmdline_user_args():  # jump to the boss fight (scripted screenshots)
 		shot_mode = true
 		if mode == "allrange":
@@ -258,6 +292,68 @@ func _build_planet() -> void:
 	s.rings = 8
 	planet = Util.mesh(s, (cfg["horizon"] as Color).darkened(0.1))
 	add_child(planet)
+
+
+## The sphere on the horizon: a sky-filling moon-sized station with a band round the middle and a lens.
+func _build_station() -> void:
+	station = Node3D.new()
+	var s := SphereMesh.new()
+	s.radius = 300.0
+	s.height = 600.0
+	s.radial_segments = 24
+	s.rings = 12
+	var c: Color = cfg["pillar"]
+	station.add_child(Util.mesh(s, c.darkened(0.15)))
+	var ring := CylinderMesh.new()
+	ring.top_radius = 304.0
+	ring.bottom_radius = 304.0
+	ring.height = 14.0
+	ring.radial_segments = 24
+	station.add_child(Util.mesh(ring, c.darkened(0.45)))
+	var lens := Util.glow(Util.ball(46.0, Color(0.5, 1.0, 0.6)), Color(0.4, 1.0, 0.5), 1.6)
+	lens.position = Vector3(-90, 130, 270)
+	station.add_child(lens)
+	add_child(station)
+
+
+## Rear-view window: enemy fighters sit behind the chase camera, so show them in a corner.
+func _build_mirror() -> void:
+	var layer := CanvasLayer.new()
+	add_child(layer)
+	var frame := ColorRect.new()
+	frame.color = Color(0, 0, 0, 0.7)
+	frame.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	frame.offset_left = -386.0
+	frame.offset_right = -14.0
+	frame.offset_top = 36.0  # below the boss bar
+	frame.offset_bottom = 176.0
+	layer.add_child(frame)
+	var svc := SubViewportContainer.new()
+	svc.stretch = true
+	svc.position = Vector2(6, 6)
+	svc.size = Vector2(360, 128)
+	frame.add_child(svc)
+	var sv := SubViewport.new()
+	sv.size = Vector2i(360, 128)
+	svc.add_child(sv)
+	mirror_cam = Camera3D.new()
+	mirror_cam.fov = 80.0
+	mirror_cam.far = 300.0
+	sv.add_child(mirror_cam)
+	var lab := Label.new()
+	lab.text = "REAR"
+	lab.add_theme_font_size_override("font_size", 14)
+	lab.position = Vector2(10, 4)
+	frame.add_child(lab)
+	mirror_box = frame
+
+
+func _update_mirror() -> void:
+	mirror_box.visible = state != "title"
+	var sp := ship.global_position
+	var back := -_rig_forward()
+	mirror_cam.global_position = sp + Vector3(0, 2.2, 0) + back * 1.0
+	mirror_cam.look_at(sp + Vector3(0, 1.6, 0) + back * 60.0)
 
 
 ## All-range arena: glowing boundary posts and a scatter of columns/arches to weave through.
@@ -354,10 +450,11 @@ func _update_music() -> void:
 	if state == "dead" or state == "won":
 		music.set_intensity(1.0)
 		return
-	var song := mode
+	var base: String = cfg.get("song", mode)
+	var song := base
 	var level := 0.3
 	if boss_spawned:
-		song = "boss_" + mode
+		song = "boss_" + base
 		level = 1.0
 	elif mode == "allrange":
 		level = 0.25 + 0.75 * clampf(float(kills) / float(cfg["quota"]), 0.0, 1.0)
@@ -437,7 +534,10 @@ func _play(delta: float) -> void:
 	_move_wrecks(delta)
 	_move_pickups(delta)
 	_check_obstacles()
+	_check_trench()
 	_update_camera(delta)
+	if mirror_cam:
+		_update_mirror()
 
 	if hp <= 0.0:
 		_end_run("dead")
@@ -466,7 +566,12 @@ func _spawn_things(delta: float) -> void:
 			var pattern: String = cfg["waves"].pick_random()
 			_spawn_wave(pattern)
 		if mode == "rail":
-			_spawn_obstacles(float(ph.get("obs", 1.0)))
+			_spawn_obstacles(float(ph.get("obs", 1.0)), ph.get("kinds", []))
+			if float(ph.get("tail", 0.0)) > 0.0:
+				tail_t -= delta
+				if tail_t <= 0.0:
+					tail_t = float(ph["tail"]) * randf_range(0.8, 1.2)
+					_spawn_tail()
 		else:
 			_spawn_rocks(float(ph.get("rocks", 1.0)))
 			_spawn_rings()
@@ -474,6 +579,8 @@ func _spawn_things(delta: float) -> void:
 		_spawn_scenery()
 	elif mode == "asteroid":
 		planet.position = rig.position + Vector3(-190, 50, -700)
+	if station:
+		station.position = rig.position + Vector3(-90, 40, -760)
 
 
 ## Scripted level segments: the pace changes as you progress and each change is announced.
@@ -944,6 +1051,15 @@ func _spawn_chaser() -> void:
 	f["vel"] = (sp - pos).normalized() * float(cfg["foe_speed"])
 
 
+## A fighter that drops in behind you and shoots forward. Shake it by braking (it overshoots and is
+## then in your sights), boosting away, rolling to reflect its shots, or looping under them.
+func _spawn_tail() -> void:
+	var sp := ship.global_position
+	var f := _spawn_foe("drone", Vector3(sp.x, sp.y, sp.z + 120.0), 0, "tail", 0.0)
+	f["side"] = [-1.0, 1.0].pick_random()
+	hud.toast("FIGHTER ON YOUR TAIL  -  check the rear view, brake to shake it")
+
+
 func _spawn_foe(kind: String, pos: Vector3, wid := 0, fmode := "sine", phase := 0.0) -> Dictionary:
 	var n := Foes.build(kind)
 	add_child(n)
@@ -995,7 +1111,7 @@ func _move_foes(delta: float) -> void:
 			Util.burst(self, n.global_position, Color(1.0, 0.55, 0.1))
 			_sfx("boom")
 			_destroy_foe(f, false)
-		elif mode != "allrange" and _gone(n.global_position, 15.0):
+		elif mode != "allrange" and _gone(n.global_position, 400.0 if f["mode"] == "tail" else 15.0):
 			_destroy_foe(f, false)
 
 
@@ -1003,6 +1119,16 @@ func _rail_motion(f: Dictionary, delta: float, sp: Vector3) -> void:
 	var n: Node3D = f["n"]
 	var prev_x := n.position.x
 	var base: Vector3 = f["base"]
+	if f["mode"] == "tail":
+		# Holds station ~32 behind at your own speed. Brake and it flies past into your sights; boost and it falls away.
+		var off := n.position.z - sp.z
+		n.position.z -= (FORWARD_SPEED + clampf((off - 32.0) * 0.8, -6.0, 25.0)) * delta
+		var k := clampf(delta * 1.5, 0.0, 1.0)
+		n.position.x = lerpf(n.position.x, sp.x + float(f["side"]) * 6.0, k)
+		n.position.y = lerpf(n.position.y, sp.y + 1.0, k)
+		f["vx"] = (n.position.x - prev_x) / maxf(delta, 0.0001)
+		f["bank"] = clampf(-float(f["vx"]) * 0.08, -0.7, 0.7)
+		return
 	if f.get("diving", false):
 		n.position += (f["dir"] as Vector3) * 45.0 * delta
 	else:
@@ -1089,6 +1215,11 @@ func _foe_fire(f: Dictionary, delta: float, sp: Vector3) -> void:
 		f["fire"] = randf_range(1.2, 2.4)
 		var vship := _rig_forward() * FORWARD_SPEED * speed_mult
 		_enemy_shot(from, sp + vship * (dist / float(cfg["shot_speed"])))
+	elif f["mode"] == "tail":
+		if from.z < sp.z + 6.0 or from.z - sp.z > 90.0:
+			return  # only fires from behind, and only when close enough to be a threat
+		f["fire"] = randf_range(1.1, 1.8)
+		_enemy_shot(from, sp, 90.0)
 	else:
 		if from.z >= sp.z - 15.0:
 			return
@@ -1164,11 +1295,12 @@ func _move_wrecks(delta: float) -> void:
 			n.queue_free()
 
 
-func _enemy_shot(from: Vector3, to: Vector3) -> void:
+## `back` is how far behind the ship a shot may be before it is culled: shots from fighters on your tail start there.
+func _enemy_shot(from: Vector3, to: Vector3, back := 15.0) -> void:
 	var s := Util.box(Vector3(0.4, 0.4, 0.4), Color(1.0, 0.5, 0.1))
 	add_child(s)
 	s.global_position = from
-	shots.append({"n": s, "v": (to - from).normalized() * cfg["shot_speed"], "reflected": false})
+	shots.append({"n": s, "v": (to - from).normalized() * cfg["shot_speed"], "reflected": false, "back": back})
 
 
 func _nearest_enemy(from: Vector3) -> Dictionary:
@@ -1222,7 +1354,7 @@ func _move_shots(delta: float) -> void:
 			elif d < 1.9:
 				_hurt(cfg["shot_dmg"])
 				gone = true
-			elif _gone(n.global_position, 15.0):
+			elif _gone(n.global_position, float(s.get("back", 15.0))):
 				gone = true
 		if gone:
 			shots.erase(s)
@@ -1232,8 +1364,13 @@ func _move_shots(delta: float) -> void:
 # ------------------------------------------------------------------- level hazards
 
 func _spawn_scenery() -> void:
+	var trench: bool = cfg.get("trench", false)
 	while scenery_z > rig.position.z - 220.0:
+		var in_trench := trench and -scenery_z >= float(cfg["trench_from"])
 		for side in [-1.0, 1.0]:
+			if in_trench:
+				_spawn_trench_wall(side)
+				continue
 			var h := randf_range(10.0, 34.0)
 			var p := Util.box(Vector3(5, h, 5), cfg["pillar"],
 					Vector3(side * randf_range(52.0, 80.0), -16.5 + h * 0.5, scenery_z))
@@ -1252,12 +1389,41 @@ func _spawn_scenery() -> void:
 			p.queue_free()
 
 
-func _spawn_obstacles(gap_mult := 1.0) -> void:
+## One section of trench wall: a slab with a ledge and a strip of lights, which is what sells the speed.
+func _spawn_trench_wall(side: float) -> void:
+	var half := float(cfg["trench_half"])
+	var c: Color = cfg["pillar"]
+	var slab := Util.box(Vector3(8, 50, 26), c, Vector3(side * (half + 4.0), 8.0, scenery_z))
+	add_child(slab)
+	scenery.append(slab)
+	var ledge := Util.box(Vector3(2.4, 1.2, 26), c.lightened(0.12), Vector3(side * (half - 1.0), randf_range(-6.0, 12.0), scenery_z))
+	add_child(ledge)
+	scenery.append(ledge)
+	var light := Util.glow(Util.box(Vector3(0.3, 0.6, 9.0), Color(0.5, 0.9, 1.0), Vector3(side * (half - 0.1), randf_range(-12.0, 16.0), scenery_z)),
+			Color(0.4, 0.8, 1.0), 2.0)
+	add_child(light)
+	scenery.append(light)
+
+
+## Trench walls scrape: touch one and you lose a little shield and are pushed back in.
+func _check_trench() -> void:
+	if not cfg.get("trench", false) or -rig.position.z < float(cfg["trench_from"]) + 20.0:
+		return
+	var limit := float(cfg["trench_half"]) - 2.0
+	if absf(ship.position.x) > limit:
+		ship.position.x = signf(ship.position.x) * limit
+		if iframes <= 0.0:
+			Util.burst(self, ship.global_position + Vector3(signf(ship.position.x) * 2.0, 0, 0), Color(1.0, 0.8, 0.3), 14, 0.7)
+			_hurt(8.0)
+
+
+func _spawn_obstacles(gap_mult := 1.0, kinds: Array = []) -> void:
 	var oc: Dictionary = cfg["obstacles"]
 	while next_obs_z > rig.position.z - 240.0:
 		# Never drop one in the boss arena.
 		if -next_obs_z < cfg["boss_z"] - 150.0:
-			var kind: String = (oc["kinds"] as Array).pick_random()
+			var pool: Array = kinds if not kinds.is_empty() else oc["kinds"]
+			var kind: String = pool.pick_random()
 			obstacles.append(Obstacles.spawn(self, next_obs_z, kind, (cfg["pillar"] as Color).lightened(0.1)))
 		next_obs_z -= float(oc["gap"]) * gap_mult * randf_range(0.8, 1.2)
 	for o in obstacles.duplicate():
@@ -1406,6 +1572,12 @@ func _update_hud() -> void:
 		extra += "    COMBO x%d" % combo
 	if overdrive_t > 0.0:
 		extra += "    OVERDRIVE %.0f" % overdrive_t
+	for f in foes:
+		if f["mode"] == "tail" and f["n"].global_position.z > ship.global_position.z:
+			extra += "    TAIL!"
+			break
+	if not boss.is_empty() and boss["kind"] == "port":
+		extra += "    VENT OPEN - FIRE A TORPEDO (hold RMB, release)" if boss["open"] else "    LOCK THE VENT"
 	if mode == "allrange":
 		var edge := Vector2(rig.position.x, rig.position.z).length()
 		if edge > float(cfg["arena"]) - 30.0:

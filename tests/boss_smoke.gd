@@ -20,15 +20,23 @@ func _initialize() -> void:
 			await physics_frame
 		assert(m.boss_spawned and not m.boss.is_empty(), "boss did not spawn, level %d" % lvl)
 		m.boss["entry"] = 1.0
-		m.locks = [m.boss]  # aiming is covered elsewhere; lock directly so the orbiting boss cannot be out of reach
+		var kind: String = m.boss["kind"]
+		if kind == "port":  # a fixed wall you fly into: put it in missile range and hold the vent open
+			m.boss["z0"] = m.rig.position.z - 130.0
+			m.boss["hold_open"] = true
+		# Aiming is covered elsewhere; lock directly so an orbiting boss cannot be out of reach.
+		m.locks = [script.Bosses.targets(m)[0]]
 		m._launch_missiles()
 		for i in 150:
 			await physics_frame
-		assert(m.boss["hp"] < m.cfg["boss_hp"], "missile did not damage boss, level %d" % lvl)
-		for p in m.boss["parts"].duplicate():  # armour first: shielded bodies shrug off the finishing blow
-			m._damage_target(p, 999.0)
-		m.boss["hp"] = 1.0
-		m._damage_target(m.boss, 5.0, m.boss["n"].global_position - m.boss["dir"] * 5.0)  # a rear hit, for the rival
+		if kind == "port":
+			assert(m.boss.is_empty(), "one torpedo should blow the vent, level %d" % lvl)
+		else:
+			assert(script.Bosses.ratio(m) < 1.0, "missile did not damage boss, level %d" % lvl)
+			for p in m.boss["parts"].duplicate():  # armour first: shielded bodies shrug off the finishing blow
+				m._damage_target(p, 999.0)
+			m.boss["hp"] = 1.0
+			m._damage_target(m.boss, 5.0, m.boss["n"].global_position - m.boss["dir"] * 5.0)  # a rear hit, for the rival
 		for i in 3:
 			await physics_frame
 		assert(m.state == "won", "state is " + m.state)

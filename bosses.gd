@@ -8,11 +8,14 @@ extends RefCounted
 const Util = preload("res://util.gd")
 
 const KINDS := {"rail": "warden", "asteroid": "geode", "allrange": "rival"}
-const TITLES := {"warden": "WARDEN", "geode": "GEODE", "rival": "RIVAL"}
+const TITLES := {"warden": "WARDEN", "geode": "GEODE", "rival": "RIVAL", "port": "REACTOR VENT"}
+## PORT (trench level, set with cfg["boss"]): a station wall with one small hatch. It only opens for
+## a moment, and only a torpedo (a lock-on missile or a bomb) gets through: lasers glance off.
+## Miss the window and you hit the wall.
 
 
 static func spawn(m) -> Dictionary:
-	var kind: String = KINDS[m.mode]
+	var kind: String = m.cfg.get("boss", KINDS[m.mode])
 	var color: Color = m.cfg["boss_color"]
 	var n := Node3D.new()
 	var parts: Array = []
@@ -20,8 +23,12 @@ static func spawn(m) -> Dictionary:
 	var d := {"kind": kind, "n": n, "hp": hp, "max": hp, "t": 0.0, "fire": 2.0, "entry": 0.0, "flash": 0.0,
 			"summon": 8.0, "parts": parts, "r": 6.0, "title": TITLES[kind], "clang": 0.0,
 			"x": 0.0, "y": 0.0, "lunge": -1.0, "lunge_cd": 6.0, "shielded": false, "throw": 3.0,
-			"state": "hunt", "state_t": 8.0, "dir": Vector3.FORWARD, "bank": 0.0, "flee": Vector3.RIGHT}
+			"state": "hunt", "state_t": 8.0, "dir": Vector3.FORWARD, "bank": 0.0, "flee": Vector3.RIGHT,
+			"open": false, "z0": 0.0}
 	match kind:
+		"port":
+			d["r"] = 16.0
+			_build_port(n, color, parts)
 		"warden":
 			_build_warden(n, color, parts)
 			d["shielded"] = true
@@ -35,6 +42,9 @@ static func spawn(m) -> Dictionary:
 	if kind == "rival":
 		n.global_position = m.ship.global_position + m._rig_forward() * 120.0
 		d["dir"] = -m._rig_forward()
+	elif kind == "port":
+		d["z0"] = m.rig.position.z - 320.0  # fixed in the world: you fly into it
+		n.global_position = Vector3(0, 0, d["z0"])
 	else:
 		n.global_position = Vector3(0, 0, m.rig.position.z - 200.0)
 	return d
@@ -98,6 +108,28 @@ static func _build_geode(n: Node3D, color: Color, parts: Array) -> void:
 		_part(parts, shard, shard.name, 8.0, 3.0)
 
 
+static func _build_port(n: Node3D, color: Color, parts: Array) -> void:
+	n.add_child(Util.box(Vector3(64, 60, 8), color.darkened(0.2), Vector3(0, 13, 0)))
+	for i in range(-3, 4):  # rows of lights give the wall scale and a sense of closing speed
+		for row in 3:
+			n.add_child(Util.glow(Util.box(Vector3(2.0, 0.5, 0.4), Color(0.9, 0.7, 0.3), Vector3(i * 8.0, 2.0 + row * 9.0, 4.2)),
+					Color(1.0, 0.6, 0.2), 1.5))
+	var hatch := Node3D.new()
+	hatch.name = "Hatch"
+	hatch.position = Vector3(0, -10.5, 4.3)
+	for side in [-1.0, 1.0]:
+		hatch.add_child(Util.glow(Util.box(Vector3(0.7, 5.4, 0.8), Color(1, 0.3, 0.2), Vector3(side * 2.6, 0, 0)), Color(1, 0.3, 0.2), 2.0))
+		hatch.add_child(Util.glow(Util.box(Vector3(5.4, 0.7, 0.8), Color(1, 0.3, 0.2), Vector3(0, side * 2.6, 0)), Color(1, 0.3, 0.2), 2.0))
+	var core := Util.glow(Util.box(Vector3(4.4, 4.4, 0.4), Color(1, 0.8, 0.3), Vector3(0, 0, -0.2)), Color(1, 0.7, 0.2), 3.0)
+	core.name = "Core"
+	hatch.add_child(core)
+	var shutter := Util.box(Vector3(4.6, 4.6, 0.6), Color(0.25, 0.26, 0.3), Vector3(0, 0, 0.4))
+	shutter.name = "Shutter"
+	hatch.add_child(shutter)
+	n.add_child(hatch)
+	_part(parts, hatch, "Vent", 8.0, 2.6)
+
+
 static func _build_rival(n: Node3D, color: Color) -> void:
 	var body := Node3D.new()
 	body.name = "Body"
@@ -137,7 +169,8 @@ static func targets(m) -> Array:
 	for p in m.boss["parts"]:
 		if not p["dead"]:
 			out.append(p)
-	out.append(m.boss)
+	if m.boss["kind"] != "port":  # the wall is not a target, only the vent in it
+		out.append(m.boss)
 	return out
 
 
@@ -158,6 +191,8 @@ static func ratio(m) -> float:
 	var d: Dictionary = m.boss
 	if d.is_empty():
 		return -1.0
+	if d["kind"] == "port":
+		return maxf(float(d["parts"][0]["hp"]), 0.0) / float(d["parts"][0]["max"])
 	var cur := maxf(float(d["hp"]), 0.0)
 	var mx := float(d["max"])
 	for p in d["parts"]:
@@ -171,6 +206,9 @@ static func ratio(m) -> float:
 static func filter(m, dmg: float, from: Vector3) -> float:
 	var d: Dictionary = m.boss
 	match d["kind"]:
+		"port":
+			_clang(m, d, from)  # the wall itself is not the target
+			return 0.0
 		"warden":
 			if live_parts(d) > 0:
 				_clang(m, d, from)
@@ -203,15 +241,21 @@ static func _clang(m, d: Dictionary, from: Vector3) -> void:
 static func damage_part(m, p: Dictionary, dmg: float) -> void:
 	if p["dead"]:
 		return
+	var pos: Vector3 = p["n"].global_position
+	if m.boss["kind"] == "port" and (not m.boss["open"] or dmg < 4.0):
+		_clang(m, m.boss, pos)  # shut, or only a laser: it glances off
+		return
 	p["hp"] = float(p["hp"]) - dmg
 	m.score += 15
-	var pos: Vector3 = p["n"].global_position
 	if float(p["hp"]) > 0.0:
 		p["flash"] = 0.08
 		Util.flash(p["n"], true)
 		Util.burst(m, pos, Color(1.0, 1.0, 0.6), 6, 0.5)
 		return
 	p["dead"] = true
+	if m.boss["kind"] == "port":
+		_blow_station(m, m.boss)
+		return
 	m.score += 400
 	m.shake = 0.8
 	Util.burst(m, pos, Color(1.0, 0.6, 0.2), 40, 1.8)
@@ -230,6 +274,23 @@ static func damage_part(m, p: Dictionary, dmg: float) -> void:
 				m.hud.toast("ARMOUR BROKEN")
 	else:
 		m.hud.toast("CANNON DOWN" if d["kind"] == "warden" else "SHARD DOWN")
+
+
+## The payoff: a chain of explosions and the level is won.
+static func _blow_station(m, d: Dictionary) -> void:
+	var n: Node3D = d["n"]
+	var c := n.global_position
+	m.score += 5000
+	m.shake = 2.0
+	m._sfx("bomb")
+	m.hud.damage_flash()
+	m.hud.toast("DIRECT HIT")
+	var cols := [Color(1.0, 0.7, 0.2), Color(1.0, 0.4, 0.1), Color(1.0, 1.0, 0.8)]
+	for i in 14:
+		var off := Vector3(randf_range(-26, 26), randf_range(-12, 24), randf_range(-8, 12))
+		Util.burst(m, c + off, cols.pick_random(), 80, 3.0)
+	n.queue_free()
+	m.boss = {}
 
 
 ## Smart bomb: hurts every part and the body.
@@ -259,6 +320,8 @@ static func update(m, delta: float) -> void:
 			if float(p["flash"]) <= 0.0:
 				Util.flash(p["n"], false)
 	match d["kind"]:
+		"port":
+			_port(m, d, delta)
 		"warden":
 			_warden(m, d, delta)
 		"geode":
@@ -271,6 +334,34 @@ static func _pulse(core: MeshInstance3D, d: Dictionary, windup: bool) -> void:
 	core.scale = Vector3.ONE * (1.5 if windup else 1.0 + 0.12 * sin(float(d["t"]) * 6.0))
 	if float(d["flash"]) <= 0.0:
 		(core.material_override as StandardMaterial3D).emission_energy_multiplier = 5.0 if windup else 1.5
+
+
+static func _port(m, d: Dictionary, delta: float) -> void:
+	var n: Node3D = d["n"]
+	var sp: Vector3 = m.ship.global_position
+	var t: float = d["t"]
+	n.position = Vector3(0, 0, d["z0"])
+	var phase := fmod(t, 3.2)
+	d["open"] = bool(d.get("hold_open", false)) or phase > 2.0  # hold_open: tests
+	var hatch: Node3D = d["parts"][0]["n"] if not d["parts"][0]["dead"] else null
+	if hatch != null:
+		var shutter: Node3D = hatch.get_node("Shutter")
+		shutter.position.x = move_toward(shutter.position.x, 5.0 if d["open"] else 0.0, 22.0 * delta)
+		# Blink just before it opens so the window can be timed.
+		var warn := phase > 1.6 and phase <= 2.0 and int(t * 16.0) % 2 == 0
+		var core: MeshInstance3D = hatch.get_node("Core")
+		if float(d["flash"]) <= 0.0:
+			(core.material_override as StandardMaterial3D).emission_energy_multiplier = 6.0 if (d["open"] or warn) else 1.5
+	# Flak from the wall keeps you honest while you line up.
+	d["fire"] = float(d["fire"]) - delta
+	if float(d["fire"]) <= 0.0:
+		d["fire"] = 0.8
+		for i in range(-1, 2):
+			m._enemy_shot(n.global_position + Vector3(i * 6.0, 6.0, 5.0), sp + m._rig_right() * i * 5.0)
+	# Reach the wall without having blown the vent and that is the end of the run.
+	if sp.z - n.global_position.z < 8.0:
+		m.hud.toast("CRASHED INTO THE STATION")
+		m.hp = 0.0
 
 
 static func _warden(m, d: Dictionary, delta: float) -> void:

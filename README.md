@@ -8,6 +8,9 @@ synthesised in code. No third-party or Nintendo assets are used.
 - Three levels with different rules: a rail canyon (scripted phases, obstacle walls), an asteroid
   belt (rocks split when shot, flight rings build a combo) and an all-range dogfight arena
   (free turning, chasing enemies, U-turn)
+- A fourth level, a trench run: surface approach, a walled trench with catwalks and gun emplacements,
+  fighters on your tail (rear-view window; brake to shake them) and a vent that opens only briefly
+  and only yields to a lock-on missile
 - A different boss per level, each with its own rule: the Warden's cannons shield its core and it
   lunges once exposed; the Geode wears spinning crystal armour and hurls boulders you can shoot
   apart; the Rival can only be hurt from behind, so you have to out-turn or out-brake it
@@ -25,7 +28,7 @@ B/MMB bomb - Shift boost - Ctrl brake - Q/E barrel roll - F loop / U-turn - P/Es
 
 ## Run
 Open the folder in Godot 4.7+, or `godot --path .`
-Add `-- --autostart --level=N` (0-2) to skip the title screen, and `--boss` to jump to the boss fight.
+Add `-- --autostart --level=N` (0-3) to skip the title screen, `--boss` to jump to the boss fight, `--at=N` to start N units in, `--tail` to spawn a chaser.
 
 ## Tests
-Headless smoke tests: `godot --headless --path . --script res://tests/boss_smoke.gd` (also `boss_mechanics`, `enemy_smoke`, `mechanics_smoke`, `modes_smoke`, `flow_smoke`, `music_smoke`).
+Headless smoke tests: `godot --headless --path . --script res://tests/boss_smoke.gd` (also `boss_mechanics`, `trench_smoke`, `enemy_smoke`, `mechanics_smoke`, `modes_smoke`, `flow_smoke`, `music_smoke`).

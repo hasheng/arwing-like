@@ -16,6 +16,8 @@ const SONGS := {
 	"boss_rail": {"bpm": 168, "root": 50, "minor": true, "prog": [0, 1, 0, 10], "bass": "run", "drums": "gallop", "lead": "stab", "seed": 41},
 	"boss_asteroid": {"bpm": 160, "root": 45, "minor": true, "prog": [0, 3, 8, 7], "bass": "drive", "drums": "gallop", "lead": "stab", "seed": 53},
 	"boss_allrange": {"bpm": 176, "root": 43, "minor": true, "prog": [0, 8, 7, 1], "bass": "run", "drums": "gallop", "lead": "stab", "seed": 67},
+	"trench": {"bpm": 128, "root": 41, "minor": true, "prog": [0, 0, 8, 7], "bass": "drive", "drums": "four", "lead": "stab", "seed": 71},
+	"boss_trench": {"bpm": 152, "root": 41, "minor": true, "prog": [0, 1, 8, 7], "bass": "run", "drums": "gallop", "lead": "stab", "seed": 83},
 	"victory": {"bpm": 132, "root": 55, "minor": false, "prog": [0, 5, 7, 0], "bass": "pulse", "drums": "four", "lead": "bright", "seed": 5, "bars": 2},
 	"defeat": {"bpm": 70, "root": 45, "minor": true, "prog": [0, 8], "bass": "pulse", "drums": "sparse", "lead": "airy", "seed": 9, "bars": 2},
 }

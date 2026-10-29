@@ -21,6 +21,13 @@ static func spawn(parent: Node3D, z: float, kind: String, color: Color, at_x := 
 			_add(n, boxes, Vector3(cx - gap - 1.5, FLOOR + h * 0.5, z), Vector3(3, h, 3), color)
 			_add(n, boxes, Vector3(cx + gap + 1.5, FLOOR + h * 0.5, z), Vector3(3, h, 3), color)
 			_add(n, boxes, Vector3(cx, top + 1.5, z), Vector3(gap * 2.0 + 6.0, 3, 3), color.lightened(0.15))
+		"bridge":
+			# A catwalk spanning the trench: fly under it or over it.
+			var cy := randf_range(-6.0, 6.0)
+			_add(n, boxes, Vector3(0, cy, z), Vector3(40, 3, 4), color)
+			for side in [-1.0, 1.0]:
+				n.add_child(Util.glow(Util.box(Vector3(0.6, 0.6, 4.2), Color(1.0, 0.6, 0.2), Vector3(side * 12.0, cy, z)),
+						Color(1.0, 0.5, 0.1), 2.0))
 		"wall":
 			# Full-width wall with one hole to thread: the ship has to commit to a line.
 			var hx := randf_range(-18.0, 18.0)
